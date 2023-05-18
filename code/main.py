@@ -28,7 +28,6 @@ def executions():
                 lr_r=0.00001,                # learning rate for relevance vector (smaller than lr_w)
                 decay_rate=0.8,            # decay rate for learning rates
                 regularizer_coef=0.00,      # coefficient of the regularization term
-                initmethod='pca',        # 'random', or 'pca' or 'samples' (it has problem)
                 maxepochs=500,   #250 yale          # maximum number of epochs
                 nprotos=1,          # for now it is only 1: check if you need to modify it for more
                 actfun = 'identity',# the function inside cost function: identity or sigmoid
@@ -41,6 +40,7 @@ def executions():
         model.fit(
             Xtrain, Ytrain,         # training set (a collection of sets)
             xval=Xval, yval=Yval,   # testing set (a collection of sets)
+            initmethod='pca',  # 'random', or 'pca' or 'samples' (it has problem)
             dataname=dataname,
             isRGB=isRGB,            # is the images RGB?
             fname=dataname          # the output file (model details)

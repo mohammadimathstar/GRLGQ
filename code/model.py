@@ -5,9 +5,16 @@ from scipy import linalg as LA
 import os
 from preprocessing import *
 
+# TODO: adding more advance optimizer (e.g. adaptive lr)
+
+
+def orthoganization_of_data(data_3d):
+    for i, data in enumerate(data_3d):
+        data_3d[i] = LA.orth(data)
+    return data_3d
 
 class Model():
-    def __init__(self, dim, dim_of_subspace, numclasses, **kwargs):
+    def __init__(self, **kwargs):
         if 'maxepochs' in kwargs.keys():
             self.nepochs = kwargs['maxepochs']
         else:
@@ -24,18 +31,6 @@ class Model():
             self.lr_r = kwargs['lr_r']
         else:
             self.lr_r = self.lr_w / 100
-        if 'decay_rate' in kwargs.keys():
-            self.decay_rate = kwargs['decay_rate']
-        else:
-            self.decay_rate = 1
-        if 'regularizer_coef' in kwargs.keys():
-            self.regularizer_coef = kwargs['regularizer_coef']
-        else:
-            self.regularizer_coef = 0
-        if 'initmethod' not in kwargs.keys():
-            self.initmethod = 'pca'
-        else:
-            self.initmethod = kwargs['initmethod']
         if 'nprotos' in kwargs.keys():
             self.nprotos = kwargs['nprotos']
         else:
@@ -48,15 +43,7 @@ class Model():
             self.act_fun = kwargs['actfun']
         else:
             self.act_fun = 'sigmoid'
-        if 'plot_res' in kwargs.keys():
-            self.plot_res = kwargs['plot_res']
-        else:
-            self.plot_res = 10
-        self.number_of_class = numclasses
-        self.dim_of_data = dim
-        self.dim_of_subspace = dim_of_subspace
 
-        self.lamda = np.ones((1, self.dim_of_subspace)) / self.dim_of_subspace
         self.acc_train = np.zeros(self.nepochs+1)
         self.cost_train = np.zeros(self.nepochs+1)
         self.acc_val = np.zeros(self.nepochs+1)
@@ -67,12 +54,13 @@ class Model():
         use gaussian distribution to initialize prototypes
         :return: initial value for prototypes
         """
-        self.xprotos = np.random.normal(0, 1,
-                                        (
-                                            self.number_of_class * self.nprotos,
-                                            self.dim_of_data,
-                                            self.dim_of_subspace
-                                        ))
+        self.xprotos = np.random.normal(
+            0, 1,
+            (
+                self.number_of_class * self.nprotos,
+                self.dim_of_data,
+                self.dim_of_subspace
+            ))
         self.yprotos = np.zeros(self.number_of_class * self.nprotos)
         k = 0
         for label in np.unique(labels):
@@ -181,6 +169,7 @@ class Model():
         :param labels
         :return: initial value for prototypes
         """
+        from scipy import linalg as LA
 
         assert self.nprotos==1
         self.xprotos = np.zeros((self.number_of_class * self.nprotos,
@@ -198,13 +187,6 @@ class Model():
             self.xprotos[i] = U[:, ids[-1:-self.dim_of_subspace-1:-1]]
 
 
-
-    # def adaptive_learning_rate_drop(self, lr_init, epoch, n=50):
-    #     return lr_init * (self.decay_rate ** np.floor(epoch / n))
-    #
-    # def adaptive_learning_rate_exp(self, lr_init, epoch):
-    #     return lr_init * np.exp(- self.decay_rate * epoch)
-
     def sigmoid(self, x):
         """
         sigmoid function (used in the cost function)
@@ -221,11 +203,86 @@ class Model():
         :return:
         """
         if self.act_fun == 'identity':
-            return (d_plus - d_minus) / (d_plus + d_minus) - \
-                   self.regularizer_coef * np.sum(np.log(self.lamda))
+            return (d_plus - d_minus) / (d_plus + d_minus)
         else:
-            return self.sigmoid((d_plus - d_minus) / (d_plus + d_minus)) - \
-                   self.regularizer_coef * np.sum(np.log(self.lamda))
+            return self.sigmoid((d_plus - d_minus) / (d_plus + d_minus))
+
+
+    def get_distances_to_prototypes(self, xdata):
+        """
+        it computes the chordal distance between two subspaces (using canonical correlation)
+        :param xdata: a subspace representing by an orthonormal matrix of size (D * d)
+        :param type: chordal or pseudo chordal
+        :return: canonical correlation, chordal distance and principal directions
+        """
+
+        U, S, Vh = np.linalg.svd(
+            xdata.T @ self.xprotos,
+            full_matrices=False,
+            compute_uv=True,
+            hermitian=False # If True, a is assumed to be Hermitian (symmetric if real-valued)
+        )
+
+        output = dict()
+        output['principal_1'] = U
+        output['principal_2'] = np.transpose(Vh, (0, 2, 1))
+        output['canonicalcorrelation'] = S
+
+        if self.distance =='chordal':
+            output['distance'] = np.sum(self.lamda) - (self.lamda @ (S.T**2)).T
+        else:
+            output['distance'] = np.sum(self.lamda) - (self.lamda @ (np.arccos(S).T ** 2)).T
+
+        assert np.sum(output['distance'] < 0) < 1, "distance is negative"
+        return output
+
+    def findWinner(self, data, label):
+        """
+        It find the closest prototypes to datapoint with the same/different labels
+        :param data: a subspace represented by an orthonormal matrix (D * d)
+        :param label: the label of the data point, an integer number
+        :return: the closest protos with the same/different labels (plus, minus)
+        """
+        results = self.get_distances_to_prototypes(data)
+
+        sameclass = np.argwhere(self.yprotos == label).T[0]
+        diffclass = np.argwhere(self.yprotos != label).T[0]
+
+        iplus = sameclass[np.argmin(results['distance'][sameclass])]
+        iminus = diffclass[np.argmin(results['distance'][diffclass])]
+        dplus = results['distance'][iplus]
+        dminus = results['distance'][iminus]
+
+        plus = dict()
+        plus['index'] = iplus
+        plus['distance'] = dplus
+        plus['Q'] = results['principal_1'][iplus]
+        plus['Qw'] = results['principal_2'][iplus]
+        plus['canonicalcorr'] = results['canonicalcorrelation'][iplus]
+
+        minus = dict()
+        minus['index'] = iminus
+        minus['distance'] = dminus
+        minus['Q'] = results['principal_1'][iminus]
+        minus['Qw'] = results['principal_2'][iminus]
+        minus['canonicalcorr'] = results['canonicalcorrelation'][iminus]
+        return plus, minus
+
+    def evaluate(self, data, labels):
+        acc = 0; cost = 0
+        for xdata, ydata in zip(data, labels):
+            plus, minus = self.findWinner(xdata, ydata)
+            cost += self.loss(plus['distance'], minus['distance'])[0]
+            if plus['distance'] < minus['distance']:
+                acc += 1
+        acc /= (len(labels) / 100)
+        cost /= len(labels)
+
+        return acc, cost
+
+    # ***********************************
+    # ***** computing derivatives *******
+    # ***********************************
 
     def der_act_fun(self, cost):
         """
@@ -238,356 +295,126 @@ class Model():
         else:
             return self.sigma * cost * (1 - cost)
 
-    def chordal_distance(self, orth1):
-        """
-        it computes the chordal distance between two subspaces (using canonical correlation)
-        :param orth1: the first subspace, a 2d array of size (d * d)
-        :param type: chordal or pseudo chordal
-        :return: canonical correlation, chordal distance and principal directions
-        """
-        output = dict()
-        output['principal_1'] = np.zeros((self.xprotos.shape[0], self.dim_of_subspace,
-                                          self.dim_of_subspace))
-        output['principal_2'] = np.zeros(output['principal_1'].shape)
-        output['distance'] = np.zeros((self.xprotos.shape[0], 1))
-        output['canonicalcorr'] = np.zeros((self.xprotos.shape[0], self.dim_of_subspace))
-
-        for i in range(self.yprotos.shape[0]):
-            m = np.matmul(orth1.T, self.xprotos[i])
-            U, S, Vh = LA.svd(m, full_matrices=False, compute_uv=True, overwrite_a=False,
-                              lapack_driver='gesdd')  # MATLAB and Octave use the 'gesvd' approach
-            output['principal_1'][i] = U; output['principal_2'][i] = Vh.T
-            if self.lamda.shape[1] == 1:
-                if self.distance=='pseudo chordal':
-                    output['distance'][i] = 1 - S[0]
-                else:
-                    output['distance'][i] = 1 - S[0] ** 2
-            else:
-                output['canonicalcorr'][i] = S
-                if self.distance=='pseudo chordal':
-                    output['distance'][i] = np.sum(self.lamda) - \
-                                            np.matmul(self.lamda, np.expand_dims(S, axis=1))
-                else:
-                    output['distance'][i] = np.sum(self.lamda) - \
-                                            np.matmul(self.lamda, np.expand_dims(S ** 2, axis=1))
-            assert output['distance'][i] >= 0, "distance is negative"
-        return output
-
-    def geodesic_distance(self, orth1):
-        """
-        it computes the chordal distance between two subspaces (using canonical correlation)
-        :param orth1: the first subspace, a 2d array of size (d * d)
-        :return: canonical correlation, chordal distance and principal directions
-        """
-        output = dict()
-        output['principal_1'] = np.zeros((self.xprotos.shape[0], self.dim_of_subspace,
-                                          self.dim_of_subspace))
-        output['principal_2'] = np.zeros(output['principal_1'].shape)
-        output['distance'] = np.zeros((self.xprotos.shape[0], 1))
-        output['canonicalcorr'] = np.zeros((self.xprotos.shape[0], self.dim_of_subspace))
-
-        for i in range(self.yprotos.shape[0]):
-            m = np.matmul(orth1.T, self.xprotos[i])
-            U, S, Vh = LA.svd(m, full_matrices=False, compute_uv=True, overwrite_a=False,
-                              lapack_driver='gesdd')
-            output['principal_1'][i] = U; output['principal_2'][i] = Vh.T
-            if self.lamda.shape[1] == 1:
-                if self.distance=='pseudo geodesic':
-                    output['distance'][i] = np.arccos(S[0])
-                else:
-                    output['distance'][i] = np.arccos(S[0]) ** 2
-            else:
-                output['canonicalcorr'][i] = S
-                S = np.array([s if s <= 1 else 1 for s in S])  # CHECK
-                if self.distance=='pseudo geodesic':
-                    output['distance'][i] = np.matmul(
-                                                      self.lamda,
-                                                      np.expand_dims(
-                                                          np.arccos(S), axis=1,
-                                                      ))
-                else:
-                    output['distance'][i] = np.matmul(
-                        self.lamda,
-                        np.expand_dims(
-                            np.arccos(S) ** 2, axis=1,
-                        ))
-
-                    # if np.isnan(output['distance'][i]):
-                    #     output['distance'][i] = 0
-
-            assert output['distance'][i] >= 0, "distance is negative"
-        return output
-
-    def findWinner(self, datapoint, label):
-        """
-        It find the closest prototypes to datapoint with the same/different labels
-        :param datapoint: a subspace, a 2d array (d * d)
-        :param label: the label of the data point, an integer number
-        :return: the closest protos with the same/different labels (plus, minus)
-        """
-        if self.distance == 'geodesic':
-            results = self.geodesic_distance(datapoint)
-        elif self.distance == 'pseudo geodesic':
-            results = self.geodesic_distance(datapoint)
-        elif self.distance == 'pseudo chordal':
-            results = self.chordal_distance(datapoint)
-        else:
-            results = self.chordal_distance(datapoint)
-
-        distances = results['distance']
-        sameclass = np.argwhere(self.yprotos == label).T[0]
-        diffclass = np.argwhere(self.yprotos != label).T[0]
-
-        iplus = sameclass[np.argmin(distances[sameclass])]
-        dplus = distances[iplus]
-        iminus = diffclass[np.argmin(distances[diffclass])]
-        dminus = distances[iminus]
-
-        plus = dict()
-        plus['index'] = iplus
-        plus['distance'] = dplus
-        plus['Q'] = results['principal_1'][iplus]
-        plus['Qw'] = results['principal_2'][iplus]
-        plus['canonicalcorr'] = results['canonicalcorr'][iplus]
-
-        minus = dict()
-        minus['index'] = iminus
-        minus['distance'] = dminus
-        minus['Q'] = results['principal_1'][iminus]
-        minus['Qw'] = results['principal_2'][iminus]
-        minus['canonicalcorr'] = results['canonicalcorr'][iminus]
-        return plus, minus
-
-    def evaluate(self, data, labels):
-        acc = 0
-        cost = 0
-
-        # check whether the data points are single image or a set of images
-        if len(data.shape)==2:
-            data = np.expand_dims(data, axis=2)
-            for i in range(len(labels)):
-                s = np.zeros(self.xprotos.shape[0])
-                data[i] = data[i]/ LA.norm(data[i])
-                for j in range(len(s)):
-                    U, S, Vh = LA.svd(np.matmul(data[i].T, self.xprotos[j]), full_matrices=False, compute_uv=True, overwrite_a=False,
-                                      lapack_driver='gesdd')
-                    s[j] = S[0]
-                m = np.argmax(s)
-                if self.yprotos[m]==labels[i]:
-                    acc +=1
-        else:
-            for i in range(len(labels)):
-                plus, minus = self.findWinner(data[i], labels[i])
-                cost += self.loss(plus['distance'], minus['distance'])[0]
-                if plus['distance'] < minus['distance']:
-                    acc += 1
-        acc /= (len(labels) / 100)
-        cost /= len(labels)
-
-        return acc, cost
-
-    def orthoganization_of_data(self, xtrain):
-        for i in range(xtrain.shape[0]):
-            xtrain[i] = LA.orth(xtrain[i])
-        return xtrain
-
     def dE_distance_plus(self, cost, dplus, dminus):
+        """
+        it computes the derivative of error function w.r.t. distance to W^+ (winner prototype with the same label)
+        :param cost: the amount of cost caused by the sample
+        :param dplus: distance between the sample and W^+
+        :param dminus: distance between the sample and W^-
+        :return: dE / dD^+
+        """
         return 2 * self.der_act_fun(cost) * dminus / ((dplus + dminus) ** 2)
 
     def dE_distance_minus(self, cost, dplus, dminus):
         """
-        computes the derivative of the cost function w.r.t distance to the prototype with different label
-        :param cost: cost value
-        :param dplus: distance to the closest prototype with the same label
-        :param dminus: distance to the closest prototype with different label
+        it computes the derivative of error function w.r.t. distance to W^- (winner prototype with a different label)
+        :param cost: the amount of cost caused by the sample
+        :param dplus: distance between the sample and W^+
+        :param dminus: distance between the sample and W^-
         :return: dE / dD^-
         """
         return - 2 * self.der_act_fun(cost) * dplus / ((dplus + dminus) ** 2)
 
-    def der_W_pseudo_chordal(self, X_rotated):
+    def der_W_chordal(self, X_rotated, canonicalcorrelation):
         """
-        derivative of distance (1 - sum_i l_i * cos(t_i))
-            w.r.t the prototype (principal component of the prototype)
+        it computes the derivative of distance (sum_i r_i * sin^2(theta_i)) w.r.t W (the winner prototype)
         :param X_rotated:  principal direction
+        :param canonicalcorrelation: canonical correlation (i.e. cos(t))
         :return: d D / dW
         """
-        Lam = np.tile(self.lamda[0],
-                        (self.dim_of_data, 1))
-        return - Lam * X_rotated
-
-    def der_W_chordal(self, X_rotated, canonicalcorr):
-        """
-        derivative of distance (sum_i l_i * sin^2(t_i))
-            w.r.t the prototype (principal component of the prototype)
-        :param X_rotated:  principal direction
-        :return: d D / dW
-        """
-        Lam = np.tile(self.lamda[0] * canonicalcorr,
-                        (self.dim_of_data, 1))
+        Lam = np.tile(
+            self.lamda[0] * canonicalcorrelation,
+            (self.dim_of_data, 1)
+        )
         return - 2 * Lam * X_rotated
 
-    def der_W_pseudo_geodesic(self, X_rotated, canonicalcorr):
+
+    def der_W_geodesic(self, X_rotated, canonicalcorrelation):
         """
-        derivative of distance (sum_i l_i * t_i)
-            w.r.t the prototype (principal component of the prototype)
+        it computes the derivative of distance (sum_i r_i * theta_i^2) w.r.t W (the winner prototype)
         :param X_rotated: principal direction
-        :param canonicalcorr: canonical correlation (i.e. cos(t))
+        :param canonicalcorrelation: canonical correlation (i.e. cos(t))
         :return: d D / dW
         """
-        # Lam = np.tile(self.lamda[0], (self.dim_of_data, 1))
-        # den = np.tile(np.sqrt(1 - canonicalcorr ** 2), (self.dim_of_data, 1))
-        # return - Lam * X_rotated / den
-        G = np.diag(self.lamda[0] / np.sqrt(1 - canonicalcorr ** 2))
-        return - np.matmul(X_rotated, G)
+        G = 2 * np.diag(
+            self.lamda[0] * np.arccos(canonicalcorrelation) / np.sqrt(1 - canonicalcorrelation ** 2)
+        )
+        return - X_rotated @ G
 
-    def der_W_geodesic(self, X_rotated, canonicalcorr):
+    def Euclidean_gradient(self, dE_dist, X_rot, CC):
         """
-        derivative of distance (sum_i l_i * t_i^2)
-            w.r.t the prototype (principal component of the prototype)
-        :param X_rotated: principal direction
-        :param canonicalcorr: canonical correlation (i.e. cos(t))
-        :return: d D / dW
+        it computes the (euclidean) derivative of the error function w.r.t. the winner prototype
+        :param dE_dist: derivative of the error function w.r.t. distance to the winner prototype
+        :param X_rot: principal direction of the sample
+        :param CC: canonical correlation i.e. cos(theta)
+        :return:
         """
-
-        G = 2 * np.diag(self.lamda[0] * np.arccos(canonicalcorr) / np.sqrt(1 - canonicalcorr ** 2))
-        return - np.matmul(X_rotated, G)
-
-    def Euclidean_gradient_geodesic(self, dE_dist, X_rot, CC):
-        return dE_dist * self.der_W_geodesic(X_rot, CC)
-
-    def Riemannian_gradient_geodesic(self, Eucl_grad_W, W):
-        return np.matmul(np.eye(W.shape[0]) - np.matmul(W, W.T) , Eucl_grad_W)
-
-    def Update_Grassman(self, W_old, grad, sign=1):
-        U, S, Vh = LA.svd(grad, full_matrices=False, compute_uv=True, overwrite_a=False, lapack_driver='gesdd')
-        return (W_old @ Vh @ np.diag(np.cos(sign*self.lr_w * S))  + U @ np.diag(np.sin(sign * self.lr_w * S)) ) @ Vh.T
-
-
-
-    def der_lamda_pseudo_chordal(self, canonicalcorr):
-        """
-        derivative of chordal distance
-            w.r.t the lambda (direction importance)
-        :param canonicalcorr: principal direction
-        :return: d D / dl
-        """
-        return - canonicalcorr.T
-
-    def der_lamda_chordal(self, canonicalcorr):
-        return - (canonicalcorr.T ** 2)
-
-    def der_lamda_pseudo_geodesic(self, canonicalcorr):
-        return np.arccos(canonicalcorr).T
-
-    def der_lamda_geodesic(self, canonicalcorr):
-        return np.arccos(canonicalcorr).T ** 2
-
-    def der_lamda_regularization_term(self):
-        if self.regularizer_coef == 0:
-            return 0
+        if self.distance == 'chordal':
+            return dE_dist * self.der_W_chordal(X_rot, CC)
         else:
-            return - self.regularizer_coef / self.lamda[0]
+            return dE_dist * self.der_W_geodesic(X_rot, CC)
+
+
+    def der_distance_relevance(self, canonicalcorrelation):
+        """
+        it computes the derivative of distance w.r.t relevance factors i.e. lambda
+        :param canonicalcorrelation: canonical correlation i.e. cos(theta)
+        :return:
+        """
+        if self.distance == 'chordal':
+            return - (canonicalcorrelation.T ** 2)
+        else:
+            return np.arccos(canonicalcorrelation).T ** 2
+
 
     def one_epoch(self, xtrain, ytrain, epoch, low_bound_lambda=0.001):
-        lr_w = self.lr_w #self.adaptive_learning_rate_drop(self.lr_w, epoch, n=20)
-        lr_r = self.lr_r #self.adaptive_learning_rate_drop(self.lr_r, epoch, n=20)
+        from scipy import linalg as LA
 
         for i in np.random.permutation(xtrain.shape[0]):
             plus, minus = self.findWinner(xtrain[i], ytrain[i])
             cost = self.loss(plus['distance'], minus['distance'])[0]
 
             # rotation of the coordinate system
-            X_rot_plus = np.matmul(xtrain[i], plus['Q'])
-            X_rot_minus = np.matmul(xtrain[i], minus['Q'])
-            proto_rot_plus = np.matmul(self.xprotos[plus['index']], plus['Qw'])
-            proto_rot_minus = np.matmul(self.xprotos[minus['index']], minus['Qw'])
+            X_rot_plus = xtrain[i] @ plus['Q']; X_rot_minus = xtrain[i] @ minus['Q']
+            proto_rot_plus = self.xprotos[plus['index']] @ plus['Qw']
+            proto_rot_minus = self.xprotos[minus['index']] @ minus['Qw']
 
-            # common details in updating rules
+            # ************************************
+            # ******** compute gradients *********
+            # ************************************
             dE_dist_plus = self.dE_distance_plus(cost, plus['distance'][0], minus['distance'][0])
             dE_dist_minus = self.dE_distance_minus(cost, plus['distance'][0], minus['distance'][0])
 
-            # updating prototypes
-            if self.distance == 'geodesic':
-                Eucl_grad_plus = self.Euclidean_gradient_geodesic(dE_dist_plus, X_rot_plus, plus['canonicalcorr'])
-                    # self.der_W_geodesic(X_rot_plus, plus['canonicalcorr'])
-                Eucl_grad_minus = self.Euclidean_gradient_geodesic(dE_dist_minus, X_rot_minus, minus['canonicalcorr'])
-                    # self.der_W_geodesic(X_rot_minus, minus['canonicalcorr'])
-                self.xprotos[plus['index']] = proto_rot_plus - lr_w * \
-                                              Eucl_grad_plus
-                                              # Eucl_grad_plus
-                                              # self.Riemannian_gradient_geodesic(Eucl_grad_plus, proto_rot_plus)
+            Eucl_grad_plus = self.Euclidean_gradient(dE_dist_plus, X_rot_plus, plus['canonicalcorr'])
+            Eucl_grad_minus = self.Euclidean_gradient(dE_dist_minus, X_rot_minus, minus['canonicalcorr'])
 
-                self.xprotos[minus['index']] = proto_rot_minus - lr_w * \
-                                               Eucl_grad_minus
-                                               # Eucl_grad_minus
-                                               # self.Riemannian_gradient_geodesic(Eucl_grad_minus, proto_rot_minus)
+            # ************************************
+            # ******** update prototypes *********
+            # ************************************
 
-                # self.xprotos[plus['index']] = self.Update_Grassman(self.xprotos[plus['index']],
-                #                                                    self.Riemannian_gradient_geodesic(Eucl_grad_plus,
-                #                                                                                      proto_rot_plus),
-                #                                                    1)
-                #
-                # self.xprotos[minus['index']] = self.Update_Grassman(self.xprotos[minus['index']],
-                #                                                     self.Riemannian_gradient_geodesic(Eucl_grad_minus,
-                #                                                                                      proto_rot_minus),
-                #                                                     1)
-
-                self.lamda[0] = self.lamda[0] - lr_r * (
-                        dE_dist_plus * self.der_lamda_geodesic(plus['canonicalcorr']) + \
-                        dE_dist_minus * self.der_lamda_geodesic(minus['canonicalcorr']) +
-                        self.der_lamda_regularization_term())
-            elif self.distance == 'pseudo geodesic':
-                self.xprotos[plus['index']] = proto_rot_plus - lr_w * dE_dist_plus * \
-                                              self.der_W_pseudo_geodesic(X_rot_plus)
-                self.xprotos[minus['index']] = proto_rot_minus - lr_w * dE_dist_minus * \
-                                               self.der_W_pseudo_geodesic(X_rot_minus)
-
-                self.lamda[0] = self.lamda[0] - lr_r * (
-                            dE_dist_plus * self.der_lamda_pseudo_geodesic(plus['canonicalcorr']) + \
-                            dE_dist_minus * self.der_lamda_pseudo_geodesic(minus['canonicalcorr']))
-            elif self.distance == 'pseudo chordal':
-                self.xprotos[plus['index']] = proto_rot_plus - lr_w * dE_dist_plus * \
-                                              self.der_W_pseudo_chordal(X_rot_plus)
-                self.xprotos[minus['index']] = proto_rot_minus - lr_w * dE_dist_minus * \
-                                               self.der_W_pseudo_chordal(X_rot_minus)
-                self.lamda[0] = self.lamda[0] - lr_r * (
-                            dE_dist_plus * self.der_lamda_pseudo_chordal(plus['canonicalcorr']) + \
-                            dE_dist_minus * self.der_lamda_pseudo_chordal(minus['canonicalcorr']))
-            else:
-                self.xprotos[plus['index']] = proto_rot_plus - lr_w * dE_dist_plus * \
-                                              self.der_W_chordal(X_rot_plus, plus['canonicalcorr'])
-                self.xprotos[minus['index']] = proto_rot_minus - lr_w * dE_dist_minus * \
-                                               self.der_W_chordal(X_rot_minus, minus['canonicalcorr'])
-                self.lamda[0] = self.lamda[0] - lr_r * (
-                        dE_dist_plus * self.der_lamda_chordal(plus['canonicalcorr']) + \
-                        dE_dist_minus * self.der_lamda_chordal(minus['canonicalcorr']))
-
-
+            self.xprotos[plus['index']] = proto_rot_plus - self.lr_w * Eucl_grad_plus
+            self.xprotos[minus['index']] = proto_rot_minus - self.lr_w * Eucl_grad_minus
 
             # orthonormalization prototypes
             self.xprotos[plus['index']] = LA.orth(self.xprotos[plus['index']])
             self.xprotos[minus['index']] = LA.orth(self.xprotos[minus['index']])
 
-            # normalization of relevance vector: lamda
+            # *******************************************
+            # ******** update relevance factors *********
+            # *******************************************
+
+            self.lamda[0] -= self.lr_r * (
+                dE_dist_plus * self.der_distance_relevance(plus['canonicalcorr']) + \
+                dE_dist_minus * self.der_distance_relevance(minus['canonicalcorr'])
+            )
+
+            # normalization of relevance factors
             self.lamda[0, np.argwhere(self.lamda < low_bound_lambda)[:,1]] = low_bound_lambda
             self.lamda[0] = self.lamda[0] / np.sum(self.lamda)
 
+    def initialize_prototypes(self, xtrain, ytrain):
+        self.lamda = np.ones((1, self.dim_of_subspace)) / self.dim_of_subspace
 
-    def fit(self, xtrain, ytrain, **kwargs):
-        if 'xval' in kwargs.keys():
-            xval = kwargs['xval']
-            yval = kwargs['yval']
-        else:
-            xval = np.array([])
-            yval = np.array([])
-            self.acc_val = np.array([])
-            self.cost_val = np.array([])
-        if 'isRGB' in kwargs.keys():
-            self.isRGB = kwargs['isRGB']
-        else:
-            self.isRGB = True
-
-        # ************** Initializing prototypes
         if (self.initmethod == 'pca'):
             self.init_protos_pca(xtrain, ytrain)
         elif (self.initmethod == 'samples'):
@@ -600,11 +427,38 @@ class Model():
             self.init_protos_random(ytrain)
 
 
+    def fit(self, xtrain, ytrain, **kwargs):
+        if 'plot_res' in kwargs.keys():
+            plot_res = kwargs['plot_res']
+        else:
+            plot_res = None
+
+        if 'initmethod' not in kwargs.keys():
+            self.initmethod = 'pca'
+        else:
+            self.initmethod = kwargs['initmethod']
+
+        self.number_of_class = len(np.unique(ytrain))
+        self.dim_of_data = xtrain.shape[1]
+        self.dim_of_subspace = xtrain.shape[2]
+
+        if 'xval' in kwargs.keys():
+            xval = kwargs['xval']
+            yval = kwargs['yval']
+        else:
+            xval = np.array([])
+            yval = np.array([])
+            self.acc_val = np.array([])
+            self.cost_val = np.array([])
+
+        # ******** Initializing prototypes *********
+        self.initialize_prototypes(xtrain, ytrain)
+
         self.acc_train[0], self.cost_train[0] = self.evaluate(xtrain, ytrain)
         if xval.size != 0:
             self.acc_val[0], self.cost_val[0] = self.evaluate(xval, yval)
 
-        # ************** training
+        # ************** training *****************
         for epoch in range(1, self.nepochs + 1):
             self.one_epoch(xtrain, ytrain, epoch)
             self.acc_train[epoch], self.cost_train[epoch] = self.evaluate(xtrain, ytrain)
@@ -621,8 +475,8 @@ class Model():
                         epoch, self.acc_train[epoch], self.cost_train[epoch]))
 
             # ************** plot error curve
-            if epoch % self.plot_res == 0:
-                # self.errorcurves(epoch)
+            if plot_res is not None and (epoch % plot_res == 0):
+                self.errorcurves(epoch)
                 # self.plotprototype()
                 if 'fname' in kwargs.keys():
                     self.save_results(kwargs['fname'])
@@ -658,49 +512,6 @@ class Model():
 
         plt.show()
 
-    def plotprototype(self):
-        c = np.random.randint(len(np.unique(self.yprotos)), size=1)[0]
-
-        ncols = 5
-        nrows = self.xprotos[c].shape[1] // ncols
-        fig, ax = plt.subplots(nrows, ncols, figsize=(15, 10))
-        k = 0
-        for i in range(nrows):
-            for j in range(ncols):
-                if self.isRGB:
-                    m = np.min(self.xprotos[c, :, k])
-                    M = np.max(self.xprotos[c, :, k])
-                    pr = (self.xprotos[c, :, k] - m) / (M-m)
-                    if nrows==1:
-                        ax[j].imshow(
-                            Vec2FIG(pr, isRGB=True),
-                            vmin=self.xprotos[c, :, k].min(),
-                            vmax=self.xprotos[c, :, k].max()
-                        )
-                    else:
-                        ax[i, j].imshow(
-                            Vec2FIG(pr, isRGB=True),
-                            vmin=self.xprotos[c, :, k].min(),
-                            vmax=self.xprotos[c, :, k].max()
-                        )
-                else:
-                    if nrows==1:
-                        ax[j].imshow(
-                            Vec2FIG(self.xprotos[c, :, k], isRGB=False),
-                            cmap=plt.get_cmap('gray'),
-                            vmin=self.xprotos[c, :, k].min(),
-                            vmax=self.xprotos[c, :, k].max()
-                        )
-                    else:
-                        ax[i, j].imshow(
-                            Vec2FIG(self.xprotos[c, :, k], isRGB=False),
-                            cmap=plt.get_cmap('gray'),
-                            vmin=self.xprotos[c, :, k].min(),
-                            vmax=self.xprotos[c, :, k].max()
-                        )
-                k += 1
-        plt.suptitle("class: {}".format(self.yprotos[c]), fontsize=30)
-        plt.show()
 
     def save_results(self, fname):
         with open(fname+'.npz', 'wb') as f:
@@ -717,6 +528,52 @@ class Model():
                      accuracy_of_validation_set=self.acc_val,
                      cost_of_validation_set=self.cost_val
                      )
+
+
+def plotprototype(self):
+    c = np.random.randint(len(np.unique(self.yprotos)), size=1)[0]
+
+    ncols = 5
+    nrows = self.xprotos[c].shape[1] // ncols
+    fig, ax = plt.subplots(nrows, ncols, figsize=(15, 10))
+    k = 0
+    for i in range(nrows):
+        for j in range(ncols):
+            if self.isRGB:
+                m = np.min(self.xprotos[c, :, k])
+                M = np.max(self.xprotos[c, :, k])
+                pr = (self.xprotos[c, :, k] - m) / (M-m)
+                if nrows==1:
+                    ax[j].imshow(
+                        Vec2FIG(pr, isRGB=True),
+                        vmin=self.xprotos[c, :, k].min(),
+                        vmax=self.xprotos[c, :, k].max()
+                    )
+                else:
+                    ax[i, j].imshow(
+                        Vec2FIG(pr, isRGB=True),
+                        vmin=self.xprotos[c, :, k].min(),
+                        vmax=self.xprotos[c, :, k].max()
+                    )
+            else:
+                if nrows==1:
+                    ax[j].imshow(
+                        Vec2FIG(self.xprotos[c, :, k], isRGB=False),
+                        cmap=plt.get_cmap('gray'),
+                        vmin=self.xprotos[c, :, k].min(),
+                        vmax=self.xprotos[c, :, k].max()
+                    )
+                else:
+                    ax[i, j].imshow(
+                        Vec2FIG(self.xprotos[c, :, k], isRGB=False),
+                        cmap=plt.get_cmap('gray'),
+                        vmin=self.xprotos[c, :, k].min(),
+                        vmax=self.xprotos[c, :, k].max()
+                    )
+            k += 1
+    plt.suptitle("class: {}".format(self.yprotos[c]), fontsize=30)
+    plt.show()
+
 
 class kmeans(): #data, labels):
     def __init__(self, dim_of_data, dim_of_subspace, lr=0.001, **kwargs):
