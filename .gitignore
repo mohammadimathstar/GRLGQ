@@ -1,2 +1,5 @@
 data/*
 model/*
+
+code/__pycache__/*
+.idea
