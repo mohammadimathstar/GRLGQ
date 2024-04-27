@@ -81,7 +81,7 @@ def loss(d_plus, d_minus, act_fun: str = 'sigmoid', sigma: int = 100):
 def compute_distances_on_grassmann_mdf(
         xdata,
         xprotos,
-        metric_type: str = 'geodesic',
+        metric_type: str = 'pseudo-chordal',
         relevance: np.array = None
 ):
     """
@@ -89,6 +89,8 @@ def compute_distances_on_grassmann_mdf(
     """
     assert xdata.shape[-2:] == xdata.shape[
                                -2:], f"The size of input data should be {xprotos.shape[1]}, but it is {xdata.shape[0]}!"
+    
+    print(metric_type)
 
     if xdata.ndim == 2:
         xdata = np.expand_dims(xdata, axis=(0, 1))
@@ -96,25 +98,23 @@ def compute_distances_on_grassmann_mdf(
         xdata = np.expand_dims(xdata, axis=1)
 
     U, S, Vh = np.linalg.svd(np.transpose(xdata, (0, 1, 3, 2)) @ xprotos, full_matrices=False, compute_uv=True, hermitian=False)
-
-    if metric_type == 'chordal':
-        dis = 1 - np.transpose(relevance @ np.transpose(S ** 2, (0, 2, 1)), (0, 2, 1))
-    elif metric_type == 'pseudo-chordal':
+    
+    if metric_type == 'pseudo-chordal':
         dis = 1 - np.transpose(relevance @ np.transpose(S, (0, 2, 1)), (0, 2, 1))
+        
     else:
         dis = np.transpose(relevance @ np.transpose(np.arccos(S) ** 2, (0, 2, 1)), (0, 2, 1))
-    if relevance.shape[0] != 1:
-        # if it is localized
-        dis = np.array([np.diag(d) for d in dis])
-
+        
+#     print('dist', dis)
     output = {
         'Q': np.squeeze(U),
         'Qw': np.squeeze(np.transpose(Vh, (0, 1, 3, 2))),
         'canonicalcorrelation': np.squeeze(S),
         'distance': np.squeeze(dis),
     }
-
-    assert np.sum(output['distance'] < 0) < 1, "Distance is negative!"
+    
+    assert np.sum(output['distance'] < 0) < 1, f"Distance is negative! {output['distance']}"
+#     print('computmdf', output['distance'])
     return output
 
 def nearest_prototypes_ids(distances, label, yprotos):

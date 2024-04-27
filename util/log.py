@@ -1,7 +1,16 @@
+"""
+Modified Script - Original Source: https://github.com/M-Nauta/ProtoTree/tree/main
+
+Description:
+This script is a modified version of the original script by M. Nauta.
+Modifications have been made to suit specific requirements or preferences.
+
+"""
+
 import os
 import argparse
 
-from util.args import save_args, load_args
+from util.args import save_args
 
 class Log:
 

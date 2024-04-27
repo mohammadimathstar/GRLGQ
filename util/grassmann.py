@@ -1,15 +1,17 @@
 import numpy as np
-from scipy import linalg as LA
 from typing import List
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-import seaborn as sns
+from torch import Tensor
+from typing import Union
 
-# SIGMOID = nn.Sigmoid()
+
+def orthogonalize_batch(x_batch: torch.Tensor) -> torch.Tensor:
+    Q, _ = torch.linalg.qr(x_batch, mode='reduced')
+    return Q
 
 
-def grassmann_repr(batch_imgs: torch.Tensor, dim_of_subspace: int) -> torch.Tensor:
+def grassmann_repr(batch_imgs: Tensor, dim_of_subspace: int) -> Tensor:
     """
 
     :param batch_imgs: a batch of features of size (batch size, num_of_channels, W, H)
@@ -19,7 +21,8 @@ def grassmann_repr(batch_imgs: torch.Tensor, dim_of_subspace: int) -> torch.Tens
     assert batch_imgs.ndim == 4, f"xs should be of the shape (batch_size, nchannel, w, h), but it is {batch_imgs.shape}"
 
     bsize, nchannel, w, h = batch_imgs.shape
-    xs = torch.transpose(batch_imgs.view(bsize, nchannel, w * h), 1, 2)
+    xs = batch_imgs.view(bsize, nchannel, w * h)
+    # xs = torch.transpose(batch_imgs.view(bsize, nchannel, w * h), 1, 2)
 
     # SVD: generate principal directions
     U, S, Vh = torch.linalg.svd(
@@ -27,15 +30,20 @@ def grassmann_repr(batch_imgs: torch.Tensor, dim_of_subspace: int) -> torch.Tens
         full_matrices=False,
         # driver='gesvd',
     )
-    return U[:, :, :dim_of_subspace]
+
+    if U.shape[0] > U.shape[1]:
+        return U[:, :, :dim_of_subspace]
+    else:
+        return Vh.transpose(-1, -2)[:, :, :dim_of_subspace]
 
 
 def init_randn(
         dim_of_data: int,
         dim_of_subspace: int,
-        labels: torch.Tensor = None,
-        num_of_protos: [int, torch.Tensor] = 1,
+        labels: Tensor = None,
+        num_of_protos: [int, Tensor] = 1,
         num_of_classes: int = None,
+        device='cpu'
 ):
     """ Initialize prototypes randomly using a Gaussian distribution."""
     if labels is None:
@@ -50,23 +58,21 @@ def init_randn(
 
     nclass = len(classes)
     prototype_shape = (total_num_of_protos, dim_of_data, dim_of_subspace)
+    Q, _ = torch.linalg.qr(torch.randn(prototype_shape), mode='reduced')
+    xprotos = nn.Parameter(Q)
 
-    xprotos = np.random.normal(0, 1, size=prototype_shape)
     yprotos = torch.from_numpy(np.repeat(classes.numpy(), num_of_protos)).to(torch.int32)
     yprotos_mat = torch.zeros((nclass, total_num_of_protos), dtype=torch.int32)
     yprotos_mat_comp = torch.zeros((nclass, total_num_of_protos), dtype=torch.int32)
 
-    # orthonormalize prototypes
+    # setting prototypes' labels
     for i, proto in enumerate(xprotos):
-        xprotos[i] = LA.orth(proto)
         yprotos_mat[yprotos[i], i] = 1
         tmp = list(range(len(classes)))
         tmp.pop(yprotos[i])
         yprotos_mat_comp[tmp, i] = 1
 
-    xprotos = nn.Parameter(torch.from_numpy(xprotos))
-
-    return xprotos, yprotos, yprotos_mat, yprotos_mat_comp
+    return xprotos, yprotos.to(device), yprotos_mat.to(device), yprotos_mat_comp.to(device)
 
 
 def init_with_samples(
@@ -97,93 +103,21 @@ def init_with_samples(
 
         selected_idx = np.random.choice(idx, n, replace=False)
         tmp = data[selected_idx] + eps * np.random.randn(n, dim_of_data, dim_of_subspace)
-        xprotos[t: t + n] = np.array([LA.orth(sample) for sample in tmp])
+        xprotos[t: t + n], _ = torch.qr(tmp)
+        # xprotos[t: t + n] = np.array([LA.orth(sample) for sample in tmp])
         t += n
 
     yprotos = np.repeat(classes, num_of_protos)
 
-    return torch.from_numpy(xprotos), torch.from_numpy(yprotos)
-
-
-def prediction(data, xprotos, yprotos, lamda, metric_type):
-    results = compute_distances_on_grassmann_mdf(
-        data, xprotos,
-        metric_type=metric_type,
-        relevance=lamda
-    )
-    return yprotos[results['distance'].argmin(axis=1)]
-
-
-
-def relevances_grad(metric_type: str):
-    """
-    Compute the (Euclidean) derivative of the distance with respect to the relevance factors.
-    """
-
-    def f(canonicalcorrelation):
-        assert metric_type in ['geodesic',
-                               'chordal',
-                               'pseudo-chordal'], \
-            f"'{metric_type}' is an invalid distance! you can only pick from ('geodesic', 'chordal', pseudo-chordal'."
-        if metric_type == 'pseudo-chordal':
-            return canonicalcorrelation
-        else:
-            return torch.acos(canonicalcorrelation) ** 2
-
-    return f
-
-
-def distance_grad(proto_type: str):
-    """
-    \partial{mu} / \partial{d^{+-}}
-    :param proto_type:
-    :return:
-    """
-    def f(dplus, dminus):
-        if proto_type == 'plus':
-            return 2 * dminus / ((dplus + dminus) ** 2)
-        else:
-            return -2 * dplus / ((dplus + dminus) ** 2)
-
-    return f
-
-
-def prototype_grad(
-        metric_type: str):
-    """
-    Compute the derivative of the distance with respect to W^{+-} (principal vectors).
-    """
-
-    # def f(X_rotated, relevances, canonicalcorrelation=None, D: int=None):
-    def f(X_rotated, relevances, **kwargs):
-        assert metric_type in ['geodesic',
-                               'chordal',
-                               'pseudo-chordal'], \
-            f"'{metric_type}' is an invalid distance! you can only pick from ('geodesic', 'chordal', pseudo-chordal'."
-        if metric_type == 'pseudo-chordal':
-            D = kwargs['dim_of_data']
-            Lam = torch.tile(
-                relevances[0],
-                (D, 1)
-            )
-            return - Lam * X_rotated
-        else:
-            canonicalcorrelation = kwargs['canonicalcorrelation']
-            G = 2 * torch.diag(
-                relevances[0] * torch.acos(canonicalcorrelation) / torch.sqrt(1 - canonicalcorrelation ** 2)
-            )
-            return -X_rotated @ G
-
-    return f
-
-
+    # return torch.from_numpy(xprotos), torch.from_numpy(yprotos)
+    return xprotos, torch.from_numpy(yprotos)
 
 
 def compute_distances_on_grassmann_mdf(
-        xdata: torch.Tensor,
-        xprotos: torch.Tensor,
-        metric_type: str = 'pseudo-chordal',
-        relevance: np.array = None
+        xdata: Tensor,
+        xprotos: Tensor,
+        metric_type: str = 'chordal',
+        relevance: Tensor = None
 ):
     """
     Compute the (geodesic or chordal) distances between an input subspace and all prototypes.
@@ -194,15 +128,17 @@ def compute_distances_on_grassmann_mdf(
         relevance = torch.ones((1, xprotos.shape[-1])) / xprotos.shape[-1]
     xdata = xdata.unsqueeze(dim=1)
 
+    # print('xdata (distance on grass)', xdata.shape, xprotos.shape)
+
     U, S, Vh = torch.linalg.svd(
         torch.transpose(xdata, 2, 3) @ xprotos.to(xdata.dtype),
         full_matrices=False,
         # driver='gesvd',
     )
 
-    if metric_type == 'pseudo-chordal':
+    if metric_type == 'chordal':
         distance = 1 - torch.transpose(
-            relevance @ torch.transpose(S, 1, 2),
+            relevance @ torch.transpose(S, 1, 2).to(relevance.dtype),
             1, 2
         )
     else:
@@ -210,7 +146,7 @@ def compute_distances_on_grassmann_mdf(
             relevance @ torch.transpose(
                 torch.acos(S) ** 2,
                 1, 2
-            ),
+            ).to(relevance.dtype),
             1, 2
         )
 
@@ -223,7 +159,91 @@ def compute_distances_on_grassmann_mdf(
         'canonicalcorrelation': S, # SHAPE: (batch_size, num_of_prototypes, dim_of_subspaces)
         'distance': torch.squeeze(distance, -1), # SHAPE: (batch_size, num_of_prototypes)
     }
+
     return output
+
+
+def prediction(
+        data: Tensor,
+        xprotos: Tensor,
+        yprotos: Tensor,
+        lamda: Tensor,
+        metric_type: Union['geodesic', 'chordal']
+) -> Tensor:
+    results = compute_distances_on_grassmann_mdf(
+        data, xprotos,
+        metric_type=metric_type,
+        relevance=lamda
+    )
+    return yprotos[results['distance'].argmin(axis=1)]
+
+
+
+
+# def relevances_grad(metric_type: str):
+#     """
+#     Compute the (Euclidean) derivative of the distance with respect to the relevance factors.
+#     """
+#
+#     def f(canonicalcorrelation):
+#         assert metric_type in ['geodesic',
+#                                'chordal',
+#                                'pseudo-chordal'], \
+#             f"'{metric_type}' is an invalid distance! you can only pick from ('geodesic', 'chordal', pseudo-chordal'."
+#         if metric_type == 'pseudo-chordal':
+#             return canonicalcorrelation
+#         else:
+#             return torch.acos(canonicalcorrelation) ** 2
+#
+#     return f
+#
+#
+# def distance_grad(proto_type: str):
+#     """
+#     \partial{mu} / \partial{d^{+-}}
+#     :param proto_type:
+#     :return:
+#     """
+#     def f(dplus, dminus):
+#         if proto_type == 'plus':
+#             return 2 * dminus / ((dplus + dminus) ** 2)
+#         else:
+#             return -2 * dplus / ((dplus + dminus) ** 2)
+#
+#     return f
+
+
+# def prototype_grad(
+#         metric_type: str):
+#     """
+#     Compute the derivative of the distance with respect to W^{+-} (principal vectors).
+#     """
+#
+#     # def f(X_rotated, relevances, canonicalcorrelation=None, D: int=None):
+#     def f(X_rotated, relevances, **kwargs):
+#         assert metric_type in ['geodesic',
+#                                'chordal',
+#                                'pseudo-chordal'], \
+#             f"'{metric_type}' is an invalid distance! you can only pick from ('geodesic', 'chordal', pseudo-chordal'."
+#         if metric_type == 'pseudo-chordal':
+#             D = kwargs['dim_of_data']
+#             Lam = torch.tile(
+#                 relevances[0],
+#                 (D, 1)
+#             )
+#             return - Lam * X_rotated
+#         else:
+#             canonicalcorrelation = kwargs['canonicalcorrelation']
+#             G = 2 * torch.diag(
+#                 relevances[0] * torch.acos(canonicalcorrelation) / torch.sqrt(1 - canonicalcorrelation ** 2)
+#             )
+#             return -X_rotated @ G
+#
+#     return f
+
+
+
+
 
 
 # def winner_prototype_indices(ydata: torch.Tensor, yprotos_mat: torch.Tensor, distances: torch.Tensor):

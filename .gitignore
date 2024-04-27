@@ -1,6 +1,7 @@
 data/*
 model/*
 code/test.py
+run_prototypes/*
 pytorch-imp/grlgq/*
 pytorch-imp/features/state_dicts/*
 *pycache*

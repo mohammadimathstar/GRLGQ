@@ -1,5 +1,12 @@
-import torch
-import os
+"""
+Modified Script - Original Source: https://github.com/M-Nauta/ProtoTree/tree/main
+
+Description:
+This script is a modified version of the original script by M. Nauta.
+Modifications have been made to suit specific requirements or preferences.
+
+"""
+
 import argparse
 from grlgq.model import Model
 from util.log import Log
@@ -16,7 +23,7 @@ def save_model(
     model.save_state(f'{log.checkpoint_dir}/latest')
 
     # Save model every 10 epochs
-    if epoch == args.epochs or epoch%10==0:
+    if epoch == args.nepochs or epoch%10==0:
         model.save(f'{log.checkpoint_dir}/epoch_{epoch}')
         model.save_state(f'{log.checkpoint_dir}/epoch_{epoch}')
 
