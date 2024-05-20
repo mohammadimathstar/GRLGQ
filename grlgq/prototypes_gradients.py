@@ -77,18 +77,16 @@ class GeodesicPrototypeLayer(Function):
         thetta_winners2 = torch.acos(cc[torch.arange(nbatch), winner_ids[torch.arange(nbatch), 1]])
         assert relevances.shape[1] == thetta_winners1.shape[-1], f"They are not equal {relevances.shape[1]}{thetta_winners1.shape[-1]}"
         #CHECK
-        diag_rel_x_thetta1 = torch.tile(
-            relevances[0] * thetta_winners1 / torch.sqrt(1 - torch.cos(thetta_winners1)**2),
-            (xprotos.shape[-2], 1)
-        )
-        diag_rel_x_thetta2 = torch.tile(
-            relevances[0] * thetta_winners2 / torch.sqrt(1 - torch.cos(thetta_winners2)**2),
-            (xprotos.shape[-2], 1)
-        )
+        diag_rel_x_thetta1 = relevances[0] * thetta_winners1 / torch.sqrt(1 - torch.cos(thetta_winners1)**2
+        diag_rel_x_thetta2 = relevances[0] * thetta_winners2 / torch.sqrt(1 - torch.cos(thetta_winners2)**2
+        #diag_rel_x_thetta2 = torch.tile(
+         #   relevances[0] * thetta_winners2 / torch.sqrt(1 - torch.cos(thetta_winners2)**2),
+          #  (xprotos.shape[-2], 1)
+        #)
 
         # gradient of prototypes
-        grad_protos1 = - rotated_xs1 * diag_rel_x_thetta1.unsqueeze(0) * dist_grad1.unsqueeze(-1).unsqueeze(-1)
-        grad_protos2 = - rotated_xs2 * diag_rel_x_thetta2.unsqueeze(0) * dist_grad2.unsqueeze(-1).unsqueeze(-1)
+        grad_protos1 = - rotated_xs1 * diag_rel_x_thetta1.unsqueeze(1) * dist_grad1.unsqueeze(-1).unsqueeze(-1)
+        grad_protos2 = - rotated_xs2 * diag_rel_x_thetta2.unsqueeze(1) * dist_grad2.unsqueeze(-1).unsqueeze(-1)
 
         # **********************************************
         # ********** gradient of relevances ************
