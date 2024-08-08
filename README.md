@@ -61,6 +61,22 @@ To keep track of the training progress, please check the `--log_dir`. This direc
 - `log.txt`: Additional information is logged in this file to aid in monitoring and troubleshooting.
 
 
+# Explainability
+
+
+### image-set classification
+
+
+![Images](explainability/ucf.png)
+
+
+### image classification
+
+
+![Images](explainability/mnist1.png)  
+![Images](explainability/mnist2.png)
+
+
 ## Reference:
 
 When citing our work, please refer to the following article:
