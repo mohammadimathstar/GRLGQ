@@ -63,15 +63,25 @@ To keep track of the training progress, please check the `--log_dir`. This direc
 
 # Explainability
 
+Note that one can investigate model's decision by finding the most influential pixels/image on the computation of principal angles. In the following, we visually show it for two examples from two data sets:
+- for image-set classification: UCF sports data sets consisting of 8 activities,
+- for image classification: MNIST datasets consisting of 10 handwritten digits.
 
 ### image-set classification
 
+Here, we inspected model's prediction for a correctly classified image set from the ’golf-swing’ class. As $\theta_9$ has the most influence on the computation of distance, in the following we investigate the most influential images and pixels on the computation of $\theta_9$:
+- top: 7 images with the highest impact on the computation of $\theta_9$,
+- bottom: 15% of pixels with the highest impact (within each image).
 
 ![Images](explainability/ucf.png)
 
 
 ### image classification
 
+We trained the model in MNIST data set. Here, we show the reconstructed images (using a prototype) and the influence of pixels for two digits '0'. For each example:
+- left: the original handwritten digit,
+- middle: the reconstructed image using the prototype for class '0',
+- right: the heatmap encoding the influence of each pixel on the reconstructed image.
 
 ![Images](explainability/mnist1.png)  
 ![Images](explainability/mnist2.png)
