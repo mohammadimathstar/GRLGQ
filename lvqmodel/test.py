@@ -10,7 +10,7 @@ from tqdm import tqdm
 import torch.utils.data
 from torch.utils.data import DataLoader
 
-from grlgq.model import Model
+from lvqmodel.model import Model
 from util.glvq import metrics
 from util.log import Log
 

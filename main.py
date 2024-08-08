@@ -8,14 +8,14 @@ Modifications have been made to suit specific requirements or preferences.
 """
 
 from util.load_data_subspace import *
-from grlgq.model import *
+from lvqmodel.model import *
 from util.save import *
 
 from util.args import get_args, save_args
 from util.optimizer_sgd import get_optimizer
 from torch.utils.data import DataLoader
-from grlgq.train import train_epoch
-from grlgq.test import eval
+from lvqmodel.train import train_epoch
+from lvqmodel.test import eval
 
 
 def run_model(args=None):

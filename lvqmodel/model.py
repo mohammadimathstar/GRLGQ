@@ -4,7 +4,7 @@ import os
 
 from util.grassmann import grassmann_repr
 from util.glvq import *
-from grlgq.prototypes import PrototypeLayer
+from lvqmodel.prototypes import PrototypeLayer
 
 
 LOW_BOUND_LAMBDA = 0.001

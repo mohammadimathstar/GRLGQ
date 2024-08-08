@@ -8,7 +8,7 @@ Modifications have been made to suit specific requirements or preferences.
 """
 
 import argparse
-from grlgq.model import Model
+from lvqmodel.model import Model
 from util.log import Log
 
 def save_model(

@@ -15,8 +15,8 @@ import torch.utils.data
 import torch.utils.data
 from torch.utils.data import DataLoader
 
-from grlgq.model import Model
-from grlgq.prototypes import rotate_prototypes
+from lvqmodel.model import Model
+from lvqmodel.prototypes import rotate_prototypes
 from util.grassmann import orthogonalize_batch
 from util.log import Log
 

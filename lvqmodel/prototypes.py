@@ -1,5 +1,5 @@
 import torch.nn as nn
-from grlgq.prototypes_gradients import *
+from lvqmodel.prototypes_gradients import *
 from util.grassmann import init_randn
 
 
