@@ -77,8 +77,8 @@ class GeodesicPrototypeLayer(Function):
         thetta_winners2 = torch.acos(cc[torch.arange(nbatch), winner_ids[torch.arange(nbatch), 1]])
         assert relevances.shape[1] == thetta_winners1.shape[-1], f"They are not equal {relevances.shape[1]}{thetta_winners1.shape[-1]}"
         #CHECK
-        diag_rel_x_thetta1 = relevances[0] * thetta_winners1 / torch.sqrt(1 - torch.cos(thetta_winners1)**2
-        diag_rel_x_thetta2 = relevances[0] * thetta_winners2 / torch.sqrt(1 - torch.cos(thetta_winners2)**2
+        diag_rel_x_thetta1 = relevances[0] * thetta_winners1 / torch.sqrt(1 - torch.cos(thetta_winners1)**2)
+        diag_rel_x_thetta2 = relevances[0] * thetta_winners2 / torch.sqrt(1 - torch.cos(thetta_winners2)**2)
         #diag_rel_x_thetta2 = torch.tile(
          #   relevances[0] * thetta_winners2 / torch.sqrt(1 - torch.cos(thetta_winners2)**2),
           #  (xprotos.shape[-2], 1)
