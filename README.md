@@ -95,7 +95,7 @@ When citing our work, please refer to the following article:
 @article{mohammadi2024generalized,
   title={Generalized Relevance Learning Grassmann Quantization},
   author={Mohammadi, M and Babai, M and Wilkinson, MHF},
-  journal={arXiv preprint arXiv:2403.09183},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence},
   year={2024}
 }
 `
